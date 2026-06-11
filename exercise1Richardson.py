@@ -94,29 +94,41 @@ def save_summary(output_directory: Path, results: dict[float, dict]) -> None:
 def plot_maximum_radius(
     output_directory: Path,
     results: dict[float, dict],
-) -> None:
-    """Plot maximum orbital radius against the time step."""
+) -> float:
+    """Plot maximum orbital-radius increase against the time step."""
     time_steps = np.asarray(list(results.keys()))
     maximum_radii = np.asarray(
         [result["maximum_radius"] for result in results.values()]
     )
+    radius_increases = maximum_radii - ORBIT_RADIUS
+    log_time_steps = np.log10(time_steps)
+    log_radius_increases = np.log10(radius_increases)
+
+    slope, intercept = np.polyfit(
+        log_time_steps,
+        log_radius_increases,
+        1,
+    )
+    fitted_log_values = slope * log_time_steps + intercept
+    fitted_radius_increases = 10.0**fitted_log_values
 
     figure, axis = plt.subplots(figsize=(7, 5))
-    axis.semilogx(
+    axis.loglog(
         time_steps,
-        maximum_radii,
+        radius_increases,
         marker="o",
+        linestyle="none",
         label="Euler-Richardson",
     )
-    axis.axhline(
-        ORBIT_RADIUS,
-        color="black",
+    axis.loglog(
+        time_steps,
+        fitted_radius_increases,
         linestyle="--",
-        label="Initial radius = 1 AU",
+        label=fr"Fit: slope $p={slope:.4f}$",
     )
     axis.set_xlabel("Time step dt [year]")
-    axis.set_ylabel("Maximum orbital radius [AU]")
-    axis.set_title("Maximum orbital radius versus time step")
+    axis.set_ylabel("Maximum radius increase [AU]")
+    axis.set_title("Maximum orbital-radius increase versus time step")
     axis.grid(True, which="both", alpha=0.3)
     axis.legend()
     figure.tight_layout()
@@ -125,6 +137,7 @@ def plot_maximum_radius(
         dpi=200,
     )
     plt.close(figure)
+    return slope
 
 
 def plot_radius_history(
@@ -213,11 +226,12 @@ def main() -> None:
         )
 
     save_summary(output_directory, results)
-    plot_maximum_radius(output_directory, results)
+    slope = plot_maximum_radius(output_directory, results)
     plot_radius_history(output_directory, results)
     plot_orbits(output_directory, results)
 
     print()
+    print(f"estimated order p: {slope:.6f}")
     print(f"Results saved in: {output_directory}")
 
 

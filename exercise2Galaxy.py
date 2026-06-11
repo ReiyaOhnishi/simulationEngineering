@@ -11,15 +11,16 @@ from simlation import galaxy
 
 
 BLACK_HOLE_MASS = 1.0
-STAR_MASS = 1.0e-6
+MEAN_STAR_MASS = 1.0e-6
+STAR_MASS_SPREAD = 0.2
+RANDOM_SEED = 20260612
 INNER_RADIUS = 0.5  # AU
 OUTER_RADIUS = 5.0  # AU
 RING_COUNT = 10
-SOFTENING = 1.0e-3  # AU
 BLOCK_SIZE = 128
 
 QUICK_STAR_COUNTS = (1_000, 2_000, 4_000, 8_000)
-FULL_STAR_COUNTS = (1_000, 3_000, 10_000, 30_000, 100_000)
+STAR_COUNTS = (1_000, 3_000, 10_000, 30_000, 100_000)
 
 PREVIEW_STAR_COUNT = 300
 PREVIEW_STEPS = 500
@@ -28,10 +29,16 @@ PREVIEW_STEPS = 500
 def create_ring_galaxy(
     star_count: int,
     ring_count: int = RING_COUNT,
+    seed: int = RANDOM_SEED,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Create a central black hole and stars on circular rings."""
     if star_count < ring_count:
         raise ValueError("Star count must be at least the ring count.")
+
+    rng = np.random.default_rng(seed)
+    minimum_mass = MEAN_STAR_MASS * (1.0 - STAR_MASS_SPREAD)
+    maximum_mass = MEAN_STAR_MASS * (1.0 + STAR_MASS_SPREAD)
+    star_masses = rng.uniform(minimum_mass, maximum_mass, star_count)
 
     radii = np.linspace(INNER_RADIUS, OUTER_RADIUS, ring_count)
     counts = np.full(ring_count, star_count // ring_count, dtype=int)
@@ -40,18 +47,20 @@ def create_ring_galaxy(
     star_positions = []
     star_velocities = []
     ring_ids = []
-    enclosed_star_count = 0
+    star_offset = 0
+    enclosed_star_mass = 0.0
 
     for ring_index, (radius, count) in enumerate(zip(radii, counts)):
         phase = ring_index * np.pi / ring_count
         angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
         angles += phase
+        ring_masses = star_masses[star_offset : star_offset + count]
 
         positions = np.column_stack(
             (radius * np.cos(angles), radius * np.sin(angles))
         )
 
-        enclosed_mass = BLACK_HOLE_MASS + enclosed_star_count * STAR_MASS
+        enclosed_mass = BLACK_HOLE_MASS + enclosed_star_mass
         circular_speed = np.sqrt(G * enclosed_mass / radius)
         velocities = np.column_stack(
             (
@@ -63,7 +72,8 @@ def create_ring_galaxy(
         star_positions.append(positions)
         star_velocities.append(velocities)
         ring_ids.append(np.full(count, ring_index, dtype=int))
-        enclosed_star_count += count
+        enclosed_star_mass += np.sum(ring_masses)
+        star_offset += count
 
     star_positions = np.vstack(star_positions)
     star_velocities = np.vstack(star_velocities)
@@ -71,9 +81,7 @@ def create_ring_galaxy(
 
     positions = np.vstack(([0.0, 0.0], star_positions))
     velocities = np.vstack(([0.0, 0.0], star_velocities))
-    masses = np.concatenate(
-        ([BLACK_HOLE_MASS], np.full(star_count, STAR_MASS))
-    )
+    masses = np.concatenate(([BLACK_HOLE_MASS], star_masses))
 
     # Remove the small residual center-of-mass velocity.
     velocities[0] = -np.sum(
@@ -97,7 +105,6 @@ def benchmark_one_step(star_counts: tuple[int, ...]) -> list[tuple[int, float]]:
             velocities,
             masses,
             dt=DT,
-            softening=SOFTENING,
             block_size=BLOCK_SIZE,
         )
         elapsed = perf_counter() - start
@@ -120,7 +127,6 @@ def simulate_preview():
             velocities,
             masses,
             dt=DT,
-            softening=SOFTENING,
             block_size=BLOCK_SIZE,
         )
 
@@ -143,24 +149,35 @@ def save_timings(
 def plot_timings(
     output_directory: Path,
     timings: list[tuple[int, float]],
-) -> None:
-    """Plot measured time and an N-squared reference line."""
+) -> float:
+    """Plot measured time and a power-law fit on logarithmic axes."""
     star_counts = np.asarray([item[0] for item in timings], dtype=float)
     elapsed_times = np.asarray([item[1] for item in timings], dtype=float)
-    reference = elapsed_times[0] * (star_counts / star_counts[0]) ** 2
+
+    log_star_counts = np.log10(star_counts)
+    log_elapsed_times = np.log10(elapsed_times)
+    slope, intercept = np.polyfit(
+        log_star_counts,
+        log_elapsed_times,
+        1,
+    )
+    fitted_elapsed_times = 10.0 ** (
+        slope * log_star_counts + intercept
+    )
 
     figure, axis = plt.subplots(figsize=(7, 5))
     axis.loglog(
         star_counts,
         elapsed_times,
         marker="o",
+        linestyle="none",
         label="Measured",
     )
     axis.loglog(
         star_counts,
-        reference,
+        fitted_elapsed_times,
         linestyle="--",
-        label=r"$N^2$ reference",
+        label=fr"Fit: slope $p={slope:.4f}$",
     )
     axis.set_xlabel("Number of stars")
     axis.set_ylabel("Time per step [s]")
@@ -173,6 +190,7 @@ def plot_timings(
         dpi=200,
     )
     plt.close(figure)
+    return slope
 
 
 def plot_preview(
@@ -224,9 +242,9 @@ def parse_arguments():
         description="Benchmark a direct N-body galaxy simulation."
     )
     parser.add_argument(
-        "--full",
+        "--quick",
         action="store_true",
-        help="Include up to 100,000 stars. This may take a very long time.",
+        help="Benchmark only up to 8,000 stars.",
     )
     parser.add_argument(
         "--no-preview",
@@ -238,7 +256,7 @@ def parse_arguments():
 
 def main() -> None:
     arguments = parse_arguments()
-    star_counts = FULL_STAR_COUNTS if arguments.full else QUICK_STAR_COUNTS
+    star_counts = QUICK_STAR_COUNTS if arguments.quick else STAR_COUNTS
 
     output_directory = (
         Path(__file__).resolve().parent / "exercise2_galaxy_results"
@@ -247,11 +265,17 @@ def main() -> None:
 
     print("Direct N-body galaxy simulation")
     print(f"block size: {BLOCK_SIZE}")
+    print(
+        "star mass range: "
+        f"{MEAN_STAR_MASS * (1.0 - STAR_MASS_SPREAD):.2e} - "
+        f"{MEAN_STAR_MASS * (1.0 + STAR_MASS_SPREAD):.2e}"
+    )
+    print(f"random seed: {RANDOM_SEED}")
     print()
 
     timings = benchmark_one_step(star_counts)
     save_timings(output_directory, timings)
-    plot_timings(output_directory, timings)
+    slope = plot_timings(output_directory, timings)
 
     if not arguments.no_preview:
         initial_positions, final_positions, ring_ids = simulate_preview()
@@ -263,9 +287,10 @@ def main() -> None:
         )
 
     print()
+    print(f"estimated slope p: {slope:.6f}")
     print(f"Results saved in: {output_directory}")
-    if not arguments.full:
-        print("Use --full to benchmark up to 100,000 stars.")
+    if arguments.quick:
+        print("Run without --quick to benchmark up to 100,000 stars.")
 
 
 if __name__ == "__main__":

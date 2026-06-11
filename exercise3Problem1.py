@@ -10,7 +10,15 @@ from simlation import calc, eulerRichardson, rungeKutta4
 
 ORBIT_RADIUS = 1.0  # AU
 SIMULATION_TIME = 5.0  # year
-TIME_STEPS = (0.01, 0.001, 0.0001)
+TIME_STEPS = (
+    0.01,
+    0.005,
+    0.002,
+    0.001,
+    0.0005,
+    0.0002,
+    0.0001,
+)
 ERROR_FLOOR = 1.0e-18
 
 METHODS = {

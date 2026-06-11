@@ -7,7 +7,6 @@ def accelerations(
     positions: np.ndarray,
     masses: np.ndarray,
     gravitational_constant: float = G,
-    softening: float = 1.0e-3,
     block_size: int = 128,
 ) -> np.ndarray:
     """Calculate exact direct-sum gravitational accelerations."""
@@ -20,14 +19,11 @@ def accelerations(
         raise ValueError("Masses must have one value for each body.")
     if np.any(masses <= 0):
         raise ValueError("All masses must be positive.")
-    if softening < 0:
-        raise ValueError("Softening must not be negative.")
     if block_size <= 0:
         raise ValueError("Block size must be positive.")
 
     body_count = positions.shape[0]
     result = np.empty_like(positions)
-    softening_squared = softening**2
 
     # A block is compared with every body. This keeps memory use O(BN)
     # while retaining the exact O(N^2) direct-force calculation.
@@ -42,10 +38,11 @@ def accelerations(
             displacement,
             displacement,
         )
-        distance_squared += softening_squared
 
         local_indices = np.arange(end - start)
         distance_squared[local_indices, start + local_indices] = np.inf
+        if np.any(distance_squared == 0):
+            raise ValueError("Two different bodies occupy the same position.")
 
         inverse_distance_cubed = distance_squared**-1.5
         weights = inverse_distance_cubed * masses[np.newaxis, :]
@@ -65,7 +62,6 @@ def step(
     masses: np.ndarray,
     dt: float = DT,
     gravitational_constant: float = G,
-    softening: float = 1.0e-3,
     block_size: int = 128,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Advance all bodies by one Euler-Cromer step."""
@@ -73,7 +69,6 @@ def step(
         positions,
         masses,
         gravitational_constant=gravitational_constant,
-        softening=softening,
         block_size=block_size,
     )
     velocities += acceleration * dt
