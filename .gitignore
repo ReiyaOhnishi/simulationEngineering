@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+/__init__.py
+
+.venv/
+venv/
+
+exercise1_richardson_results/
+exercise2_galaxy_results/
+exercise3_problem1_results/
